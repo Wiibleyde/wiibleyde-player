@@ -80,6 +80,40 @@
 
             pc.oniceconnectionstatechange = () => console.log('ICE state:', pc.iceConnectionState);
             pc.onicegatheringstatechange = () => console.log('ICE gathering:', pc.iceGatheringState);
+            pc.onconnectionstatechange = () => console.log('Peer state:', pc.connectionState);
+
+            async function logSelectedCandidatePair() {
+                try {
+                    const stats = await pc.getStats();
+                    let selectedPair;
+
+                    stats.forEach((report) => {
+                        if (report.type === 'transport' && report.selectedCandidatePairId) {
+                            selectedPair = stats.get(report.selectedCandidatePairId);
+                        }
+
+                        if (!selectedPair && report.type === 'candidate-pair' && report.selected) {
+                            selectedPair = report;
+                        }
+                    });
+
+                    if (!selectedPair) {
+                        console.log('No selected ICE candidate pair yet');
+                        return;
+                    }
+
+                    const localCandidate = stats.get(selectedPair.localCandidateId);
+                    const remoteCandidate = stats.get(selectedPair.remoteCandidateId);
+
+                    console.log('Selected ICE pair:', {
+                        state: selectedPair.state,
+                        local: localCandidate ? `${localCandidate.address || localCandidate.ip}:${localCandidate.port} (${localCandidate.protocol})` : 'unknown',
+                        remote: remoteCandidate ? `${remoteCandidate.address || remoteCandidate.ip}:${remoteCandidate.port} (${remoteCandidate.protocol})` : 'unknown'
+                    });
+                } catch (err) {
+                    console.warn('Failed to inspect ICE candidate pair', err);
+                }
+            }
 
             pc.ontrack = (e) => {
                 const video = document.getElementById('v');
@@ -106,6 +140,7 @@
 
             const answerSdp = await res.text();
             await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+            setTimeout(logSelectedCandidatePair, 2000);
 
             const video = document.getElementById('v');
 
