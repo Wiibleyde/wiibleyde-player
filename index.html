@@ -56,6 +56,7 @@
 
         const app = urlParams.get('app') || 'live';
         const stream = urlParams.get('stream') || 'livestream';
+        const eip = urlParams.get('eip');
 
         const muted = urlParams.get('muted') !== 'false';
         const autoplay = urlParams.get('autoplay') !== 'false';
@@ -65,7 +66,12 @@
         const host = urlParams.get('host') || 'rtc-stream.bonnell.fr';
         const protocol = urlParams.get('protocol') || 'https';
 
-        const whepUrl = `${protocol}://${host}/rtc/v1/whep/?app=${app}&stream=${stream}`;
+        const whepQuery = new URLSearchParams({ app, stream });
+        if (eip) {
+            whepQuery.set('eip', eip);
+        }
+
+        const whepUrl = `${protocol}://${host}/rtc/v1/whep/?${whepQuery.toString()}`;
 
         async function play() {
             const pc = new RTCPeerConnection({
