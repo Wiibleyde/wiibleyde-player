@@ -63,7 +63,7 @@
         const playsinline = urlParams.get('playsinline') !== 'false';
         const disablePictureInPicture = urlParams.get('disablePictureInPicture') === 'true';
         const host = urlParams.get('host') || 'rtc-stream.bonnell.fr';
-        const protocol = urlParams.get('protocol') || (window.location.protocol === 'https:' ? 'https' : 'http');
+        const protocol = urlParams.get('protocol') || 'https';
 
         const whepUrl = `${protocol}://${host}/rtc/v1/whep/?app=${app}&stream=${stream}`;
 
