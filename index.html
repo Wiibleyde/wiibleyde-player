@@ -68,7 +68,12 @@
         const whepUrl = `${protocol}://${host}/rtc/v1/whep/?app=${app}&stream=${stream}`;
 
         async function play() {
-            const pc = new RTCPeerConnection();
+            const pc = new RTCPeerConnection({
+                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+            });
+
+            pc.oniceconnectionstatechange = () => console.log('ICE state:', pc.iceConnectionState);
+            pc.onicegatheringstatechange = () => console.log('ICE gathering:', pc.iceGatheringState);
 
             pc.ontrack = (e) => {
                 const video = document.getElementById('v');
