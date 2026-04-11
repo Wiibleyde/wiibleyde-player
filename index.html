@@ -73,6 +73,8 @@
 
         const whepUrl = `${protocol}://${host}/rtc/v1/whep/?${whepQuery.toString()}`;
 
+        console.log('WHEP URL:', whepUrl);
+
         async function play() {
             const pc = new RTCPeerConnection({
                 iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
