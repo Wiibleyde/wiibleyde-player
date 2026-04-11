@@ -1,0 +1,136 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title>SABS - WHEP Player</title>
+    <style>
+        body {
+            margin: 0;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        video {
+            max-width: 100%;
+            max-height: 100%;
+        }
+
+        #play-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            z-index: 10;
+        }
+
+        #play-overlay.visible {
+            display: flex;
+        }
+
+        #play-overlay svg {
+            width: 80px;
+            height: 80px;
+            fill: #fff;
+            opacity: 0.9;
+        }
+    </style>
+</head>
+
+<body>
+    <video id="v" autoplay muted></video>
+    <div id="play-overlay" title="Click to play">
+        <svg viewBox="0 0 24 24">
+            <path d="M8 5v14l11-7z" />
+        </svg>
+    </div>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+
+        const app = urlParams.get('app') || 'live';
+        const stream = urlParams.get('stream') || 'livestream';
+
+        const muted = urlParams.get('muted') !== 'false';
+        const autoplay = urlParams.get('autoplay') !== 'false';
+        const controls = urlParams.get('controls') === 'true';
+        const playsinline = urlParams.get('playsinline') !== 'false';
+        const disablePictureInPicture = urlParams.get('disablePictureInPicture') === 'true';
+        const host = urlParams.get('host') || '192.168.1.2:9000';
+        const protocol = urlParams.get('protocol') || (window.location.protocol === 'https:' ? 'https' : 'http');
+
+        const whepUrl = `${protocol}://${host}/rtc/v1/whep/?app=${app}&stream=${stream}`;
+
+        async function play() {
+            const pc = new RTCPeerConnection();
+
+            pc.ontrack = (e) => {
+                const video = document.getElementById('v');
+                if (video.srcObject !== e.streams[0]) {
+                    video.srcObject = e.streams[0];
+                }
+            };
+
+            pc.addTransceiver('video', { direction: 'recvonly' });
+            pc.addTransceiver('audio', { direction: 'recvonly' });
+
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+
+            const res = await fetch(whepUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/sdp' },
+                body: offer.sdp
+            });
+
+            if (!res.ok) {
+                throw new Error(`WHEP error: ${res.status} ${await res.text()}`);
+            }
+
+            const answerSdp = await res.text();
+            await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+
+            const video = document.getElementById('v');
+
+            video.muted = true;
+            video.autoplay = autoplay;
+            video.controls = controls;
+            video.playsInline = playsinline;
+            if (disablePictureInPicture) {
+                video.disablePictureInPicture = true;
+            }
+
+            if (autoplay) {
+                try {
+                    await video.play();
+                    // Playback started — now unmute if the user wants audio
+                    video.muted = muted;
+                } catch {
+                    // Browser still blocked (e.g. no user gesture at all) — show overlay
+                    console.warn('Autoplay failed, showing play overlay');
+                    const overlay = document.getElementById('play-overlay');
+                    overlay.classList.add('visible');
+                    overlay.addEventListener('click', () => {
+                        video.muted = muted;
+                        video.play();
+                        overlay.classList.remove('visible');
+                    }, { once: true });
+                }
+            } else {
+                video.muted = muted;
+            }
+        }
+
+        play().catch(err => {
+            console.error(err);
+        });
+    </script>
+</body>
+
+</html>
