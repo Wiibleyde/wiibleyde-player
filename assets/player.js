@@ -1,5 +1,5 @@
 // ── Constants ─────────────────────────────────────────────────────────
-const RETRY_DELAY = 1000;
+const RETRY_DELAY = 200;
 
 // ── URL parameters → frozen config ───────────────────────────────────
 const _params = new URLSearchParams(window.location.search);
@@ -15,6 +15,9 @@ const config = Object.freeze({
     spatial3d:               _params.get('spatial3d')               === 'true',
     host:                    _params.get('host')                    ?? 'rtc-stream.bonnell.fr',
     protocol:                _params.get('protocol')                ?? 'https',
+    zone:                    _params.get('zone')                    ?? '',
+    screenName:              _params.get('screenName')              ?? '',
+    eventName:               _params.get('eventName')              ?? '',
 });
 
 const _whepQuery = new URLSearchParams({ app: config.app, stream: config.stream });
@@ -70,14 +73,14 @@ function setListenerOrientation(fx, fy, fz, ux, uy, uz) {
 }
 
 // Configure PannerNode distance rolloff from a world-space radius.
-// refDistance  = closest point at full volume  (25 % of radius)
-// maxDistance  = beyond this point volume stops decreasing
+// refDistance  = closest point at full volume  (20 % of radius)
+// maxDistance  = beyond this point volume stops decreasing (clamped at 20 %)
 function applyPannerDistanceConfig(radius = screenRadius) {
     const r = Number(radius);
     if (!Number.isFinite(r) || r <= 0) return;
     screenRadius = r;
     if (!pannerNode) return;
-    pannerNode.refDistance  = Math.max(1, r * 0.25);
+    pannerNode.refDistance  = Math.max(1, r * 0.2);
     pannerNode.maxDistance  = Math.max(pannerNode.refDistance, r);
     pannerNode.rolloffFactor = 1;
 }
@@ -117,6 +120,18 @@ function teardownAudio() {
     if (gainNode)     { gainNode.disconnect();     gainNode     = null; }
 }
 
+// Ask the Lua resource to re-send screen position / radius data.
+// Called after the audio graph is (re)built so the panner always has
+// fresh coordinates even if the DUI was recycled.
+function requestSoundSync() {
+    if (!config.spatial3d || !config.zone || !config.screenName || !config.eventName) return;
+    fetch(`https://${GetParentResourceName()}/${config.eventName}:dui:requestSoundSync`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ zone: config.zone, screenName: config.screenName }),
+    }).catch(() => {});
+}
+
 // Wire the WebRTC MediaStream through a 3D PannerNode.
 // Graph: MediaStreamSource → Panner → Gain → destination (speakers).
 function routeAudioThrough3D() {
@@ -144,6 +159,8 @@ function routeAudioThrough3D() {
     streamSource.connect(pannerNode);
     pannerNode.connect(gainNode);
     gainNode.connect(ctx.destination);
+
+    requestSoundSync();
 }
 
 // ── Player ────────────────────────────────────────────────────────────
@@ -247,91 +264,6 @@ window.addEventListener('message', ({ data }) => {
         return;
     }
 });
-
-// ── Browser dev tools (disabled inside FiveM / nui: protocol) ─────────
-if (window.location.protocol !== 'nui:') {
-    // Chrome blocks AudioContext until a user gesture. This one-time button
-    // unlocks it and starts the positional audio test loop.
-    const unlockBtn = document.createElement('button');
-    unlockBtn.textContent = '🔊 Click to unlock audio';
-    unlockBtn.style.cssText = 'position:fixed;bottom:8px;right:8px;z-index:99;padding:6px 12px;cursor:pointer;font-size:13px';
-    document.body.appendChild(unlockBtn);
-    unlockBtn.addEventListener('click', () => {
-        getAudioCtx().resume().then(() => {
-            if (config.spatial3d && video.srcObject) routeAudioThrough3D();
-            startPositionTest();
-        });
-        unlockBtn.remove();
-    }, { once: true });
-
-    // ── Positional audio test ─────────────────────────────────────────
-    // The listener is fixed at the origin. The source lerps between waypoints
-    // every TEST_STEP_DURATION ms, varying both direction and distance so that
-    // both panning and volume attenuation are clearly audible.
-    const TEST_STEP_DURATION = 5000;
-    const TEST_POSITIONS = [
-        { x:  0, y: 0, z:  -2, label: 'front-near' },
-        { x:  0, y: 0, z:  -8, label: 'front-far'  },
-        { x:  3, y: 0, z:   0, label: 'right-near' },
-        { x:  9, y: 0, z:   0, label: 'right-far'  },
-        { x:  0, y: 0, z:   4, label: 'back-near'  },
-        { x:  0, y: 0, z:  12, label: 'back-far'   },
-        { x: -3, y: 0, z:   0, label: 'left-near'  },
-        { x: -9, y: 0, z:   0, label: 'left-far'   },
-    ];
-
-    let testIndex  = 0;
-    let testRafId  = null;
-    let testStepAt = null;
-
-    function lerp(a, b, t) { return a + (b - a) * t; }
-
-    function animateTest(now) {
-        if (testStepAt === null) {
-            testStepAt = now;
-            const p = TEST_POSITIONS[testIndex % TEST_POSITIONS.length];
-            console.log(`[posTest] → ${p.label}`);
-        }
-
-        const from = TEST_POSITIONS[testIndex % TEST_POSITIONS.length];
-        const to   = TEST_POSITIONS[(testIndex + 1) % TEST_POSITIONS.length];
-        const t    = Math.min((now - testStepAt) / TEST_STEP_DURATION, 1);
-
-        updateSourcePosition(lerp(from.x, to.x, t), lerp(from.y, to.y, t), lerp(from.z, to.z, t));
-
-        if (t >= 1) {
-            testIndex++;
-            testStepAt = now;
-            console.log(`[posTest] → ${TEST_POSITIONS[testIndex % TEST_POSITIONS.length].label}`);
-        }
-
-        testRafId = requestAnimationFrame(animateTest);
-    }
-
-    function startPositionTest() {
-        if (testRafId !== null) return;
-        applyPannerDistanceConfig(5);
-        setListenerPosition(0, 0, 0);
-        setListenerOrientation(0, 0, -1, 0, 1, 0);
-        testRafId = requestAnimationFrame(animateTest);
-    }
-
-    // Console helpers — mirror the FiveM message types for manual testing.
-    window.forcePosition = (x, y, z) => {
-        setListenerPosition(x, y, z);
-        console.log(`Listener → (${x}, ${y}, ${z})`);
-    };
-
-    window.forceScreenPosition = (x, y, z, radius) => {
-        applyPannerDistanceConfig(radius);
-        updateSourcePosition(x, y, z);
-        if (pannerNode) {
-            console.log(`Screen → (${x}, ${y}, ${z}), radius ${screenRadius}`);
-        } else {
-            console.warn('pannerNode not ready — retry after stream starts');
-        }
-    };
-}
 
 // ── Bootstrap ─────────────────────────────────────────────────────────
 showOffline();
