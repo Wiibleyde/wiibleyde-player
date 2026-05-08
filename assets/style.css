@@ -30,9 +30,8 @@ body.led::after {
     right: 0;
     bottom: 0;
     background-image:
-        radial-gradient(circle at center, transparent 30%, rgba(0, 0, 0, 0.3) 31%, rgba(0, 0, 0, 0.3) 100%);
-    background-size: 8px 8px;
+        radial-gradient(circle at center, transparent 65%, rgba(0, 0, 0, 0.92) 43%);
+    background-size: 4px 4px;
     pointer-events: none;
     z-index: 9999;
-    mix-blend-mode: multiply;
 }
