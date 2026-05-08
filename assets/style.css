@@ -21,3 +21,18 @@ video {
 #offline-img.visible {
     display: block;
 }
+
+body.led::after {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-image:
+        radial-gradient(circle at center, transparent 30%, rgba(0, 0, 0, 0.3) 31%, rgba(0, 0, 0, 0.3) 100%);
+    background-size: 8px 8px;
+    pointer-events: none;
+    z-index: 9999;
+    mix-blend-mode: multiply;
+}

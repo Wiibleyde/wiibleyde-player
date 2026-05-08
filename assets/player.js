@@ -13,12 +13,15 @@ const config = Object.freeze({
     playsinline:             _params.get('playsinline')             !== 'false',
     disablePictureInPicture: _params.get('disablePictureInPicture') === 'true',
     spatial3d:               _params.get('spatial3d')               === 'true',
+    led:                     _params.get('led')                     === 'true',
     host:                    _params.get('host')                    ?? 'rtc-stream.bonnell.fr',
     protocol:                _params.get('protocol')                ?? 'https',
     zone:                    _params.get('zone')                    ?? '',
     screenName:              _params.get('screenName')              ?? '',
     eventName:               _params.get('eventName')              ?? '',
 });
+
+if (config.led) document.body.classList.add('led');
 
 const _whepQuery = new URLSearchParams({ app: config.app, stream: config.stream });
 if (config.eip) _whepQuery.set('eip', config.eip);
