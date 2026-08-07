@@ -14,7 +14,7 @@ const config = Object.freeze({
     disablePictureInPicture: _params.get('disablePictureInPicture') === 'true',
     spatial3d:               _params.get('spatial3d')               === 'true',
     led:                     _params.get('led')                     === 'true',
-    host:                    _params.get('host')                    ?? 'rtc-stream.bonnell.fr',
+    host:                    _params.get('host')                    ?? 'rtc-stream.wiibleyde.dev',
     protocol:                _params.get('protocol')                ?? 'https',
     zone:                    _params.get('zone')                    ?? '',
     screenName:              _params.get('screenName')              ?? '',
@@ -128,6 +128,9 @@ function teardownAudio() {
 // fresh coordinates even if the DUI was recycled.
 function requestSoundSync() {
     if (!config.spatial3d || !config.zone || !config.screenName || !config.eventName) return;
+    // Only CEF pages served from nui:// inject this shim. Evaluating it while
+    // building the fetch argument would throw a ReferenceError past .catch().
+    if (typeof GetParentResourceName !== 'function') return;
     fetch(`https://${GetParentResourceName()}/${config.eventName}:dui:requestSoundSync`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -170,8 +173,12 @@ function routeAudioThrough3D() {
 async function play() {
     closeCurrentPc();
 
+    // No iceServers: SRS advertises a public host candidate, so the browser
+    // always dials outward and opens its own NAT binding. A srflx candidate
+    // would never win the pair, and setLocalDescription resolves before
+    // gathering finishes anyway — the offer is POSTed without it. Dropping
+    // STUN removes a DNS lookup plus a round-trip from every attempt.
     const pc = new RTCPeerConnection({
-        iceServers:   [{ urls: 'stun:stun.l.google.com:19302' }],
         bundlePolicy: 'max-bundle',
     });
     currentPc = pc;

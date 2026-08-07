@@ -1,0 +1,63 @@
+{
+  "tab_size": 4,
+  "hard_tabs": false,
+  "ensure_final_newline_on_save": true,
+  "remove_trailing_whitespace_on_save": true,
+  "format_on_save": "off",
+  "languages": {
+    "JavaScript": {
+      "language_servers": ["!biome", "..."],
+      "tab_size": 4,
+      "formatter": "prettier"
+    },
+    "TypeScript": {
+      "language_servers": ["!biome", "..."],
+      "tab_size": 4,
+      "formatter": "prettier"
+    },
+    "TSX": {
+      "language_servers": ["!biome", "..."],
+      "tab_size": 4,
+      "formatter": "prettier"
+    },
+    "JSON": {
+      "language_servers": ["!biome", "..."],
+      "tab_size": 2,
+      "formatter": "prettier"
+    },
+    "JSONC": {
+      "language_servers": ["!biome", "..."],
+      "tab_size": 2,
+      "formatter": "prettier"
+    },
+    "CSS": {
+      "language_servers": ["!biome", "..."],
+      "tab_size": 4,
+      "formatter": "prettier"
+    },
+    "HTML": {
+      "language_servers": ["!biome", "..."],
+      "tab_size": 4,
+      "formatter": "prettier"
+    }
+  },
+  "lsp": {
+    "vtsls": {
+      "settings": {
+        "javascript": {
+          "format": { "enable": false }
+        }
+      }
+    }
+  },
+  "file_scan_exclusions": [
+    "**/.git",
+    "**/.DS_Store"
+  ],
+  "prettier": {
+    "allowed": true,
+    "tab_width": 4,
+    "single_quote": true,
+    "print_width": 120
+  }
+}
