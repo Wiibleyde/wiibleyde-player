@@ -14,6 +14,7 @@ const config = Object.freeze({
     disablePictureInPicture: _params.get('disablePictureInPicture') === 'true',
     spatial3d:               _params.get('spatial3d')               === 'true',
     led:                     _params.get('led')                     === 'true',
+    noOfflineImage:          _params.get('noOfflineImage')          === 'true',
     host:                    _params.get('host')                    ?? 'rtc-stream.wiibleyde.dev',
     protocol:                _params.get('protocol')                ?? 'https',
     zone:                    _params.get('zone')                    ?? '',
@@ -100,6 +101,7 @@ function updateSourcePosition(x, y, z) {
 // ── DOM helpers ───────────────────────────────────────────────────────
 function showOffline() {
     video.style.display = 'none';
+    if (config.noOfflineImage) return;
     offlineImg.classList.add('visible');
 }
 
