@@ -12,6 +12,28 @@ video {
     max-height: 100%;
 }
 
+canvas {
+    display: none;
+    max-width: 100%;
+    max-height: 100%;
+}
+
+/* Stacked-alpha mode: the <video> still has to be laid out and painted for
+   Chromium to keep decoding it, so it is made invisible rather than removed. */
+body.alpha {
+    background: transparent;
+}
+
+body.alpha video {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+body.alpha canvas {
+    display: block;
+}
+
 #offline-img {
     display: none;
     max-width: 100%;

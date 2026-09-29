@@ -18,6 +18,34 @@ function _flag(name) {
     return ['', 'true', '1', 'yes', 'on'].includes(raw.trim().toLowerCase());
 }
 
+function _number(name, fallback) {
+    const n = Number(_params.get(name));
+    return _params.has(name) && Number.isFinite(n) ? n : fallback;
+}
+
+// `alpha` alone (or =stacked) → stacked colour+mask frame.
+// `alpha=00ff00` (or %2300ff00, or 0f0) → chroma key on that colour.
+// Anything else, or absent → null: the page stays opaque as before.
+function _alpha() {
+    if (!_flag('alpha') && !_params.has('alpha')) return null;
+    const raw = _params.get('alpha').trim().replace(/^#/, '').toLowerCase();
+    if (['false', '0', 'no', 'off'].includes(raw)) return null;
+    if (['', 'true', '1', 'yes', 'on', 'stacked'].includes(raw)) return { mode: 'stacked' };
+
+    const hex = /^[0-9a-f]{3}$/.test(raw) ? raw.replace(/./g, '$&$&') : raw;
+    if (!/^[0-9a-f]{6}$/.test(hex)) {
+        console.error(`alpha: "${raw}" is neither a flag nor an RRGGBB colour, ignoring`);
+        return null;
+    }
+    return Object.freeze({
+        mode:       'chroma',
+        key:        [0, 2, 4].map(i => parseInt(hex.slice(i, i + 2), 16) / 255),
+        tolerance:  _number('tolerance',  0.4),
+        smoothness: _number('smoothness', 0.08),
+        spill:      _number('spill',      0.1),
+    });
+}
+
 const config = Object.freeze({
     app:                     _params.get('app')                     ?? 'live',
     stream:                  _params.get('stream')                  ?? 'livestream',
@@ -29,6 +57,7 @@ const config = Object.freeze({
     disablePictureInPicture: _flag('disablePictureInPicture'),
     spatial3d:               _flag('spatial3d'),
     led:                     _flag('led'),
+    alpha:                   _alpha(),
     noOfflineImage:          _flag('noOfflineImage'),
     host:                    _params.get('host')                    ?? 'rtc-stream.wiibleyde.dev',
     protocol:                _params.get('protocol')                ?? 'https',
@@ -38,6 +67,7 @@ const config = Object.freeze({
 });
 
 if (config.led) document.body.classList.add('led');
+if (config.alpha) document.body.classList.add('alpha');
 
 const _whepQuery = new URLSearchParams({ app: config.app, stream: config.stream });
 if (config.eip) _whepQuery.set('eip', config.eip);
@@ -45,6 +75,7 @@ const WHEP_URL = `${config.protocol}://${config.host}/rtc/v1/whep/?${_whepQuery}
 
 // ── DOM references ────────────────────────────────────────────────────
 const video     = document.getElementById('v');
+const canvas    = document.getElementById('c');
 const offlineImg = document.getElementById('offline-img');
 
 // A display:none <img> still downloads its src, and offline.png is ~350 KB per DUI.
@@ -145,6 +176,7 @@ function updateSpeakers(next) {
 // ── DOM helpers ───────────────────────────────────────────────────────
 function showOffline() {
     video.style.display = 'none';
+    canvas.style.display = 'none';
     if (config.noOfflineImage) return;
     offlineImg?.classList.add('visible');
 }
@@ -152,6 +184,153 @@ function showOffline() {
 function showVideo() {
     offlineImg?.classList.remove('visible');
     video.style.display = '';
+    canvas.style.display = '';
+}
+
+// ── Transparency renderer ─────────────────────────────────────────────
+// WebRTC carries no alpha plane, so transparency has to be rebuilt here from
+// an opaque frame. Two ways to publish one, picked by `alpha`:
+//
+//   alpha            stacked: one double-height frame, colour composited over
+//                    black on top and alpha as a white-on-black mask below.
+//                    Exact, semi-transparency included; costs 2× the pixels.
+//
+//   ┌──────────┐
+//   │  colour  │ ─┐
+//   ├──────────┤  ├─→ canvas (w × h/2, rgba)
+//   │   mask   │ ─┘
+//   └──────────┘
+//
+//   alpha=RRGGBB     chroma key: a plain frame on a solid background of that
+//                    colour, removed here. Nothing special to publish, but
+//                    4:2:0 chroma and WebRTC compression leave soft, tinted
+//                    edges, and nothing in the picture may be close to the key.
+const ALPHA_VERTEX_SHADER = `
+attribute vec2 p;
+varying vec2 uv;
+void main() {
+    uv = vec2(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5);
+    gl_Position = vec4(p, 0.0, 1.0);
+}`;
+
+// The top half is already premultiplied (rgb × a) since it was composited over
+// black. halfTexel keeps linear filtering from pulling mask rows into the
+// colour half and vice versa at the seam. min(rgb, a) drops compression
+// overshoot that would otherwise be an invalid premultiplied value and glow.
+const STACKED_FRAGMENT_SHADER = `
+precision mediump float;
+uniform sampler2D frame;
+uniform float halfTexel;
+varying vec2 uv;
+void main() {
+    vec3  rgb = texture2D(frame, vec2(uv.x, min(uv.y * 0.5, 0.5 - halfTexel))).rgb;
+    float a   = texture2D(frame, vec2(uv.x, max(0.5 + uv.y * 0.5, 0.5 + halfTexel))).r;
+    gl_FragColor = vec4(min(rgb, vec3(a)), a);
+}`;
+
+// Same model as OBS's own Chroma Key filter, so values tuned there carry over
+// (OBS shows them ×1000): distance is measured on the chroma plane only, which
+// makes the key insensitive to how brightly the background is lit.
+//   tolerance   distance under which a pixel is fully transparent
+//   smoothness  ramp above it to fully opaque — the soft edge
+//   spill       ramp over which kept pixels near the key are desaturated,
+//               which is what removes the green fringe around the subject
+const CHROMA_FRAGMENT_SHADER = `
+precision mediump float;
+uniform sampler2D frame;
+uniform vec3  keyColor;
+uniform float tolerance;
+uniform float smoothness;
+uniform float spill;
+varying vec2 uv;
+vec2 chroma(vec3 c) {
+    return vec2(dot(c, vec3(-0.1687, -0.3313,  0.5)),
+                dot(c, vec3( 0.5,    -0.4187, -0.0813)));
+}
+void main() {
+    vec3  rgb = texture2D(frame, uv).rgb;
+    float d   = distance(chroma(rgb), chroma(keyColor));
+    float a   = smoothstep(tolerance, tolerance + smoothness, d);
+    float keep = pow(clamp((d - tolerance) / spill, 0.0, 1.0), 1.5);
+    rgb = mix(vec3(dot(rgb, vec3(0.2126, 0.7152, 0.0722))), rgb, keep);
+    gl_FragColor = vec4(rgb * a, a);
+}`;
+
+function compileProgram(gl, fragmentSource) {
+    const program = gl.createProgram();
+    [[gl.VERTEX_SHADER, ALPHA_VERTEX_SHADER], [gl.FRAGMENT_SHADER, fragmentSource]]
+        .forEach(([type, source]) => {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                throw new Error(gl.getShaderInfoLog(shader));
+            }
+            gl.attachShader(program, shader);
+        });
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        throw new Error(gl.getProgramInfoLog(program));
+    }
+    return program;
+}
+
+function startAlphaRenderer() {
+    const gl = canvas.getContext('webgl', { alpha: true, premultipliedAlpha: true, antialias: false });
+    if (!gl) {
+        console.error('alpha: WebGL unavailable, showing the frame as-is');
+        document.body.classList.remove('alpha');
+        return;
+    }
+
+    const stacked = config.alpha.mode === 'stacked';
+    const program = compileProgram(gl, stacked ? STACKED_FRAGMENT_SHADER : CHROMA_FRAGMENT_SHADER);
+    gl.useProgram(program);
+
+    // One triangle strip covering the viewport.
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    const p = gl.getAttribLocation(program, 'p');
+    gl.enableVertexAttribArray(p);
+    gl.vertexAttribPointer(p, 2, gl.FLOAT, false, 0, 0);
+
+    // Video dimensions are rarely powers of two: WebGL 1 then requires
+    // CLAMP_TO_EDGE and no mipmaps, or the texture samples as black.
+    gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+    const halfTexel = gl.getUniformLocation(program, 'halfTexel');
+    if (!stacked) {
+        const { key, tolerance, smoothness, spill } = config.alpha;
+        gl.uniform3fv(gl.getUniformLocation(program, 'keyColor'), key);
+        gl.uniform1f(gl.getUniformLocation(program, 'tolerance'), tolerance);
+        gl.uniform1f(gl.getUniformLocation(program, 'smoothness'), Math.max(smoothness, 1e-4));
+        gl.uniform1f(gl.getUniformLocation(program, 'spill'), Math.max(spill, 1e-4));
+    }
+
+    // requestAnimationFrame rather than requestVideoFrameCallback: the latter
+    // is tied to the <video> being composited, which an opacity-0 element may
+    // not be. Re-uploading an unchanged frame is the cheaper failure.
+    function draw() {
+        requestAnimationFrame(draw);
+        if (video.readyState < video.HAVE_CURRENT_DATA || !video.videoHeight) return;
+
+        const w = video.videoWidth;
+        const h = stacked ? video.videoHeight >> 1 : video.videoHeight;
+        if (canvas.width !== w || canvas.height !== h) {
+            canvas.width  = w;
+            canvas.height = h;
+            gl.viewport(0, 0, w, h);
+            if (stacked) gl.uniform1f(halfTexel, 0.5 / video.videoHeight);
+        }
+
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
+    requestAnimationFrame(draw);
 }
 
 // ── WebRTC / player helpers ───────────────────────────────────────────
@@ -394,4 +573,5 @@ window.addEventListener('message', ({ data }) => {
 
 // ── Bootstrap ─────────────────────────────────────────────────────────
 showOffline();
+if (config.alpha) startAlphaRenderer();
 start();
